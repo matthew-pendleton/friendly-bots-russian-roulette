@@ -1,5 +1,5 @@
-// ── friendly-roulette ─────────────────────────────────────────────────────────
-// Part of the Friendly bot suite.
+// ── unfriendly-roulette ───────────────────────────────────────────────────────
+// Part of the Unfriendly bot suite.
 //
 // App directory description:
 //   Gather 2-3 players and take turns pulling the trigger. One bullet.
@@ -7,7 +7,7 @@
 //
 // Language:    English only
 // DM support:  No (server-only)
-// Status:      Playing: Friendly Roulette
+// Status:      Playing: Unfriendly Roulette
 // ─────────────────────────────────────────────────────────────────────────────
 
 const {
@@ -75,7 +75,7 @@ function recordResult(survivorIds, loserId) {
 const CHALLENGE_TAUNTS = [
   (c, players) => `🔫 <@${c}> has loaded the cylinder and is inviting ${players} to play. Nobody has to do this. Somebody will.`,
   (c, players) => `🫀 <@${c}> spun the cylinder, looked ${players} dead in the eye, and said nothing. Just slid the gun across the table.`,
-  (c, players) => `🎰 <@${c}> has proposed a friendly game of Russian Roulette to ${players}. The word "friendly" is doing a lot of work here.`,
+  (c, players) => `🎰 <@${c}> has proposed an unfriendly game of Russian Roulette to ${players}. The word "unfriendly" is doing a lot of work here.`,
   (c, players) => `🕯️ <@${c}> dimmed the lights, poured something they shouldn't have, and challenged ${players} to a round.`,
   (c, players) => `☠️ <@${c}> has extended an invitation to ${players}. It is not the kind of invitation you frame and put on a wall.`,
   (c, players) => `🩸 <@${c}> has decided that ${players} should play a game. The game involves one bullet and poor decision-making.`,
@@ -147,8 +147,8 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ── Slash command definitions ─────────────────────────────────────────────────
 const commands = [
   new SlashCommandBuilder()
-    .setName("friendly-roulette")
-    .setDescription("Friendly Roulette — one bullet, six chambers, real consequences 🔫")
+    .setName("unfriendly-roulette")
+    .setDescription("Unfriendly Roulette — one bullet, six chambers, real consequences 🔫")
     .setDMPermission(false)
     .addSubcommand((sub) =>
       sub
@@ -173,7 +173,7 @@ const commands = [
       sub.setName("leaderboard").setDescription("Show the roulette leaderboard")
     )
     .addSubcommand((sub) =>
-      sub.setName("help").setDescription("How Friendly Roulette works")
+      sub.setName("help").setDescription("How Unfriendly Roulette works")
     ),
 ].map((cmd) => cmd.toJSON());
 
@@ -207,7 +207,7 @@ async function runGame(channel, players) {
   let   currentIdx    = 0;
   const log           = [];
 
-  const embedTitle = `🔫 Friendly Roulette — ${players.map(p => p.name).join(" vs ")}`;
+  const embedTitle = `🔫 Unfriendly Roulette — ${players.map(p => p.name).join(" vs ")}`;
 
   const gameMsg = await channel.send({
     embeds: [buildGameEmbed({
@@ -254,7 +254,7 @@ async function runGame(channel, players) {
       try {
         await current.member.timeout(
           TIMEOUT_MINUTES * 60 * 1000,
-          `Lost a Friendly Roulette game`
+          `Lost an Unfriendly Roulette game`
         );
         await channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
       } catch {
@@ -353,32 +353,32 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "friendly-roulette") return;
+  if (interaction.commandName !== "unfriendly-roulette") return;
 
   const sub = interaction.options.getSubcommand();
 
-  // ── /friendly-roulette help ───────────────────────────────────────────────
+  // ── /unfriendly-roulette help ─────────────────────────────────────────────
   if (sub === "help") {
     return interaction.reply({
       content:
-        `## 🔫 Friendly Roulette\n` +
+        `## 🔫 Unfriendly Roulette\n` +
         `2-3 players. One bullet. Six chambers. The loser gets timed out.\n\n` +
         `**Commands**\n` +
-        `\`/friendly-roulette play @user1 [@user2]\` — start a game\n` +
-        `\`/friendly-roulette stats [@user]\` — view stats\n` +
-        `\`/friendly-roulette leaderboard\` — server rankings\n` +
-        `\`/friendly-roulette help\` — show this message\n\n` +
+        `\`/unfriendly-roulette play @user1 [@user2]\` — start a game\n` +
+        `\`/unfriendly-roulette stats [@user]\` — view stats\n` +
+        `\`/unfriendly-roulette leaderboard\` — server rankings\n` +
+        `\`/unfriendly-roulette help\` — show this message\n\n` +
         `**How it works**\n` +
         `> Players take turns pulling the trigger.\n` +
         `> One bullet is loaded into a random chamber out of six.\n` +
         `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes.\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
-        `*Part of the **Friendly** bot suite.*`,
+        `*Part of the **Unfriendly** bot suite.*`,
       ephemeral: true,
     });
   }
 
-  // ── /friendly-roulette stats ──────────────────────────────────────────────
+  // ── /unfriendly-roulette stats ────────────────────────────────────────────
   if (sub === "stats") {
     const target    = interaction.options.getUser("user") ?? interaction.user;
     const stats     = loadStats();
@@ -422,7 +422,7 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
-  // ── /friendly-roulette leaderboard ───────────────────────────────────────
+  // ── /unfriendly-roulette leaderboard ─────────────────────────────────────
   if (sub === "leaderboard") {
     const stats = loadStats();
 
@@ -469,13 +469,13 @@ client.on("interactionCreate", async (interaction) => {
       embeds: [
         new EmbedBuilder()
           .setColor(0xffd700)
-          .setTitle("🔫 Friendly Roulette — Leaderboard")
+          .setTitle("🔫 Unfriendly Roulette — Leaderboard")
           .setDescription(table),
       ],
     });
   }
 
-  // ── /friendly-roulette play ───────────────────────────────────────────────
+  // ── /unfriendly-roulette play ─────────────────────────────────────────────
   if (sub === "play") {
     await interaction.deferReply();
 
@@ -575,7 +575,7 @@ client.on("interactionCreate", async (interaction) => {
 // ── Ready ─────────────────────────────────────────────────────────────────────
 client.once("ready", async () => {
   console.log(`✅ ${client.user.tag} is online.`);
-  client.user.setActivity("Friendly Roulette", { type: ActivityType.Playing });
+  client.user.setActivity("Unfriendly Roulette", { type: ActivityType.Playing });
   await registerCommands();
 });
 

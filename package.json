@@ -1,7 +1,7 @@
 {
-  "name": "friendly-roulette",
+  "name": "unfriendly-roulette",
   "version": "1.0.0",
-  "description": "Russian Roulette bot — part of the Friendly bot suite",
+  "description": "Russian Roulette bot — part of the Unfriendly bot suite",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
