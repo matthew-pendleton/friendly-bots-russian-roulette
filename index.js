@@ -27,7 +27,19 @@ const {
 const fs   = require("fs");
 const path = require("path");
 
-require("dotenv").config();
+const dotenvResult = require("dotenv").config({ path: path.join(__dirname, ".env") });
+if (dotenvResult.error) {
+  console.warn("⚠️ No .env loaded (or failed to parse).");
+  console.warn("   Expected at:", path.join(__dirname, ".env"));
+}
+
+const { DISCORD_TOKEN, CLIENT_ID, GUILD_ID } = process.env;
+if (!DISCORD_TOKEN || !CLIENT_ID) {
+  console.error("❌ Missing required environment variables.");
+  console.error("   Required: DISCORD_TOKEN, CLIENT_ID");
+  console.error("   Optional: GUILD_ID (register commands instantly to one server)");
+  process.exit(1);
+}
 
 const client = new Client({
   intents: [
@@ -179,11 +191,17 @@ const commands = [
 
 // ── Register slash commands ───────────────────────────────────────────────────
 async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN);
+  const rest = new REST({ version: "10" }).setToken(DISCORD_TOKEN);
   try {
     console.log("🔄 Registering slash commands...");
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
-    console.log("✅ Slash commands registered globally.");
+    if (GUILD_ID) {
+      await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+      console.log(`✅ Slash commands registered to guild ${GUILD_ID}.`);
+    } else {
+      await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
+      console.log("✅ Slash commands registered globally.");
+      console.log("   (Global commands can take a while to appear. Set GUILD_ID to register instantly.)");
+    }
   } catch (err) {
     console.error("❌ Failed to register commands:", err);
   }
@@ -579,4 +597,7 @@ client.once("ready", async () => {
   await registerCommands();
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login(DISCORD_TOKEN).catch((err) => {
+  console.error("❌ Failed to login to Discord. Check DISCORD_TOKEN.", err);
+  process.exit(1);
+});

@@ -18,6 +18,7 @@ Copy `.env.example` to `.env` or fill in the included `.env`:
 
 - `DISCORD_TOKEN`: your bot token
 - `CLIENT_ID`: your application (bot) client ID
+- `GUILD_ID` (optional): a single server ID to register commands instantly (recommended for testing)
 
 3) Run the bot
 
@@ -26,6 +27,7 @@ npm start
 ```
 
 On startup it registers slash commands globally (may take a little time to propagate).
+If you set `GUILD_ID`, it registers commands to that server immediately.
 
 ## Commands
 
