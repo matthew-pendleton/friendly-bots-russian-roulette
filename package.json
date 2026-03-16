@@ -1,0 +1,13 @@
+{
+  "name": "friendly-roulette",
+  "version": "1.0.0",
+  "description": "Russian Roulette bot — part of the Friendly bot suite",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.0.0",
+    "dotenv": "^16.0.0"
+  }
+}
