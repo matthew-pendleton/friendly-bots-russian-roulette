@@ -387,7 +387,7 @@ client.on("interactionCreate", async (interaction) => {
         `> One bullet is loaded into a random chamber out of six.\n` +
         `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes.\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
-        `*Part of the **Unfriendly** bot suite.*`,
+        `*Part of the **Unfriendly** bot suite by Aaykith.*`,
       ephemeral: true,
     });
   }
