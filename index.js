@@ -42,11 +42,7 @@ if (!DISCORD_TOKEN || !CLIENT_ID) {
 }
 
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildModeration,
-  ],
+  intents: [GatewayIntentBits.Guilds],
 });
 
 // ── Active game tracking ──────────────────────────────────────────────────────
