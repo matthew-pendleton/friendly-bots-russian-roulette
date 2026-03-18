@@ -216,6 +216,9 @@ function buildGameEmbed({ title, log, players, round, color = 0x8b0000 }) {
 
 async function runGame(channel, players) {
   // Load the cylinder — one bullet in a random chamber
+  const botMember = channel.guild.members.me;
+  const canTimeout = botMember?.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ?? false;
+
   const bulletChamber = Math.floor(Math.random() * CHAMBERS); // 0-5
   let   pullCount     = 0;
   let   currentIdx    = 0;
@@ -265,14 +268,18 @@ async function runGame(channel, players) {
       recordResult(survivors, current.id);
 
       // Timeout the loser
-      try {
-        await current.member.timeout(
-          TIMEOUT_MINUTES * 60 * 1000,
-          `Lost an Unfriendly Roulette game`
-        );
-        await channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
-      } catch {
-        await channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
+      if (canTimeout) {
+        try {
+          await current.member.timeout(
+            TIMEOUT_MINUTES * 60 * 1000,
+            `Lost an Unfriendly Roulette game`
+          );
+          await channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
+        } catch {
+          await channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
+        }
+      } else {
+        await channel.send(`⚠️ I don't have Moderate Members permission, so <@${current.id}> won't be timed out this round.`);
       }
 
       break;
@@ -376,7 +383,7 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({
       content:
         `## 🔫 Unfriendly Roulette\n` +
-        `2-3 players. One bullet. Six chambers. The loser gets timed out.\n\n` +
+        `2-3 players. One bullet. Six chambers. The loser gets timed out if I have Moderate Members permission.\n\n` +
         `**Commands**\n` +
         `\`/unfriendly-roulette play @user1 [@user2]\` — start a game\n` +
         `\`/unfriendly-roulette stats [@user]\` — view stats\n` +
@@ -385,7 +392,7 @@ client.on("interactionCreate", async (interaction) => {
         `**How it works**\n` +
         `> Players take turns pulling the trigger.\n` +
         `> One bullet is loaded into a random chamber out of six.\n` +
-        `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes.\n` +
+        `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes (only if I have Moderate Members).\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
         `*Part of the **Unfriendly** bot suite by Aaykith.*`,
       ephemeral: true,
@@ -520,9 +527,10 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const botMember = interaction.guild.members.me;
-    if (!botMember.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
-      return interaction.editReply({ content: "⚠️ I need **Moderate Members** permission to time out the loser." });
-    }
+    const canTimeout = botMember?.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ?? false;
+    const permissionNote = canTimeout
+      ? ""
+      : "\n\n⚠️ I don't have Moderate Members permission, so the loser won't be timed out.";
 
     // Register all players as active
     allUsers.forEach(u => activePlayers.add(u.id));
@@ -552,7 +560,7 @@ client.on("interactionCreate", async (interaction) => {
     );
 
     await interaction.editReply({
-      content: `${inviteMsg}\n\n${invited.map(u => `<@${u.id}>`).join(" and ")}, do you accept?`,
+      content: `${inviteMsg}\n\n${invited.map(u => `<@${u.id}>`).join(" and ")}, do you accept?${permissionNote}`,
       components: [row],
     });
 

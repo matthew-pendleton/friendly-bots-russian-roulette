@@ -39,5 +39,5 @@ If you set `GUILD_ID`, it registers commands to that server immediately.
 ## Notes / requirements
 
 - Server-only (no DMs)
-- Needs **Moderate Members** permission to time out the loser
+- If it has **Moderate Members**, it timeouts the loser; otherwise it runs consequence-free.
 
