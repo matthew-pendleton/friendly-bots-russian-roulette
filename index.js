@@ -321,15 +321,45 @@ async function startTurn(gameKey) {
     const forfeiter = g.players[forfeitingIdx];
     const forfeitEmoji = ROUND_EMOJIS[forfeitingRoundNum - 1] ?? `${forfeitingRoundNum}`;
     g.log.push(`${forfeitEmoji} **${forfeiter.name}** forfeits (no pull in time) — eliminated.`);
-    await finishGame({
-      gameKey,
-      channel: g.channel,
-      players: g.players,
-      loser: forfeiter,
-      canTimeout: g.canTimeout,
-      log: g.log,
-      gameMsg: g.gameMsg,
-    });
+
+    // Timeout forfeiter if we have permission (same for 2- and 3-player)
+    if (g.canTimeout) {
+      try {
+        await forfeiter.member.timeout(TIMEOUT_MINUTES * 60 * 1000, `Lost an Unfriendly Roulette game (forfeit)`);
+        await g.channel.send(`🔇 <@${forfeiter.id}> has been muted for ${TIMEOUT_MINUTES} minutes (forfeit).`);
+      } catch {
+        await g.channel.send(`⚠️ Couldn't time out <@${forfeiter.id}> — they may be a mod or above my role.`);
+      }
+    } else {
+      await g.channel.send(`⚠️ I don't have Moderate Members permission, so <@${forfeiter.id}> won't be timed out.`);
+    }
+
+    activePlayers.delete(forfeiter.id);
+
+    if (g.players.length === 2) {
+      // 2-player game: forfeit = game over (finishGame does recordResult + embed + cleanup)
+      await finishGame({
+        gameKey,
+        channel: g.channel,
+        players: g.players,
+        loser: forfeiter,
+        canTimeout: g.canTimeout,
+        log: g.log,
+        gameMsg: g.gameMsg,
+      });
+      return;
+    }
+
+    // 3-player game: record elimination and continue with 2 players (same chamber / pull count)
+    const survivors = g.players.filter(p => p.id !== forfeiter.id).map(p => p.id);
+    recordResult(survivors, forfeiter.id);
+    const newPlayers = g.players.filter(p => p.id !== forfeiter.id);
+    const nextOldIdx = (forfeitingIdx + 1) % g.players.length;
+    const newCurrentIdx = nextOldIdx > forfeitingIdx ? nextOldIdx - 1 : nextOldIdx;
+
+    g.players = newPlayers;
+    g.currentIdx = newCurrentIdx;
+    await startTurn(gameKey);
   }, TURN_TIMEOUT_MS);
 }
 
@@ -536,7 +566,7 @@ client.on("interactionCreate", async (interaction) => {
         `> Players take turns pulling the trigger.\n` +
         `> Bullets are loaded into random chambers (1 for 2 players, 2 for 3 players).\n` +
         `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes (only if I have Moderate Members).\n` +
-        `> If a player doesn't pull within 30 seconds, they forfeit (treated as the loser).\n` +
+        `> If a player doesn't pull within 30 seconds, they forfeit (game over in 2-player; in 3-player they're eliminated and the game continues).\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
         `*Part of the **Unfriendly** bot suite by Aaykith.*`,
       ephemeral: true,
