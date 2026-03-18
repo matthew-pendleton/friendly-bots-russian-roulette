@@ -55,6 +55,7 @@ const INVITE_TIMEOUT_MS    = 60000;
 const TURN_TIMEOUT_MS      = 30000;
 const PULL_DELAY_MS        = 1200;
 const CHAMBERS             = 6;
+const ROUND_EMOJIS        = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"];
 const STATS_FILE           = path.join(__dirname, "stats.json");
 
 // ── Stats persistence ─────────────────────────────────────────────────────────
@@ -93,8 +94,8 @@ const CHALLENGE_TAUNTS = [
 ];
 
 const DECLINE_LINES = [
-  (d) => `🐔 <@${d}> looked at the gun, looked at the table, and quietly left the room.`,
-  (d) => `📵 <@${d}> declined. Smart, probably. Cowardly, definitely.`,
+  (d) => `🐔 <@${d}> looked at the gun, looked at the table, and left the room.`,
+  (d) => `📵 <@${d}> declined. Smart. Cowardly.`,
   (d) => `🧘 <@${d}> said they're in a really good headspace right now and a bullet would disrupt that.`,
   (d) => `🍵 <@${d}> said they just made tea and the timing really doesn't work for them right now.`,
 ];
@@ -117,10 +118,15 @@ const SAFE_PULL_FLAVOR = [
 ];
 
 const LOSER_FLAVOR = [
-  (player) => `💥 **${player}** pulls the trigger. The chamber wasn't empty. It's over.`,
-  (player) => `💥 **${player}** — that was the one. Game over.`,
-  (player) => `💥 **${player}** is done. The house always wins.`,
-  (player) => `💥 **${player}** knew the odds.`,
+  (player) => `💥 **${player}** hits the bullet.`,
+  (player) => `💥 **${player}** pulls the trigger — empty chambers are out of luck.`,
+  (player) => `💥 **${player}** knew the odds. This one wasn't kind.`,
+  (player) => `💥 **${player}** is eliminated by a single bullet.`,
+];
+
+const FORFEIT_FLAVOR = [
+  (player) => `⏱️ **${player}** didn't pull in time. Forfeit.`,
+  (player) => `⏳ **${player}** hesitated too long and is eliminated.`,
 ];
 
 const TENSION_FLAVOR = [
@@ -199,14 +205,19 @@ async function registerCommands() {
 }
 
 // ── Game engine ───────────────────────────────────────────────────────────────
-function buildGameEmbed({ title, log, players, round, color = 0x8b0000 }) {
-  const playerList = players.map(p => `• **${p.name}**`).join("\n");
-  const logText    = log.length ? "\n\n" + log.join("\n") : "";
+function buildGameEmbed({ title, log, players, currentPlayerId, color = 0x8b0000 }) {
+  const playersInline = players.map(p => `**${p.name}**`).join(" · ");
+  const logText        = log.length ? log.join("\n") : "";
+  const turnFooter     = currentPlayerId
+    ? `\n\n### <@${currentPlayerId}>'s turn`
+    : "";
+
+  const description = `Players: ${playersInline}\n\n${logText}${turnFooter}`;
 
   return new EmbedBuilder()
     .setColor(color)
     .setTitle(title)
-    .setDescription(`${playerList}${logText}`);
+    .setDescription(description);
 }
 
 function cleanupGame(gameKey) {
@@ -217,7 +228,10 @@ function cleanupGame(gameKey) {
   activeGames.delete(gameKey);
 }
 
-async function finishGame({ gameKey, channel, players, loser, canTimeout, log, embedTitle, gameMsg }) {
+async function finishGame({ gameKey, channel, players, loser, canTimeout, log, gameMsg, roundNum, endType }) {
+  if (!activeGames.has(gameKey)) return;
+
+  const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
   // Record stats
   const survivors = players.filter(p => p.id !== loser.id).map(p => p.id);
   recordResult(survivors, loser.id);
@@ -225,7 +239,9 @@ async function finishGame({ gameKey, channel, players, loser, canTimeout, log, e
   // Disable buttons
   await gameMsg.edit({
     embeds: [buildGameEmbed({
-      title: `💀 Game Over`,
+      title: endType === "bullet"
+        ? `💥 ${roundEmoji} — Bullet found`
+        : `⏳ ${roundEmoji} — Turn forfeited`,
       log,
       players,
       color: 0xffd700,
@@ -255,17 +271,19 @@ async function startTurn(gameKey) {
   if (!game) return;
 
   const current = game.players[game.currentIdx];
-  const turnLine = `👉 It's <@${current.id}>'s turn. Click **Pull trigger** within **${Math.floor(TURN_TIMEOUT_MS / 1000)}s** or forfeit.`;
+  const roundNum = game.turn + 1;
+  const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
 
   // Add tension flavor occasionally on later pulls
   if (game.pullCount >= 3 && Math.random() < 0.4) {
-    game.log.push(pickFrom(TENSION_FLAVOR));
+    game.log.push(`> ${pickFrom(TENSION_FLAVOR)}`);
   }
 
   const embeds = [buildGameEmbed({
-    title: game.embedTitle,
-    log: [...game.log, turnLine],
+    title: `${game.embedTitle} ${roundEmoji}`,
+    log: [...game.log],
     players: game.players,
+    currentPlayerId: current.id,
   })];
 
   await game.gameMsg.edit({
@@ -279,12 +297,14 @@ async function startTurn(gameKey) {
   }).catch(() => {});
 
   if (game.turnTimer) clearTimeout(game.turnTimer);
+  const forfeitingTurn = game.turn;
+  const forfeitingIdx = game.currentIdx;
+  const forfeitingRoundNum = roundNum;
   game.turnTimer = setTimeout(async () => {
     const g = activeGames.get(gameKey);
-    if (!g) return;
-    const forfeiter = g.players[g.currentIdx];
-    g.log.push(`🏳️ **${forfeiter.name}** hesitated too long and forfeited.`);
-    g.log.push(pickFrom(LOSER_FLAVOR, forfeiter.name));
+    if (!g || g.turn !== forfeitingTurn) return;
+    const forfeiter = g.players[forfeitingIdx];
+    g.log.push(pickFrom(FORFEIT_FLAVOR, forfeiter.name));
     await finishGame({
       gameKey,
       channel: g.channel,
@@ -292,8 +312,9 @@ async function startTurn(gameKey) {
       loser: forfeiter,
       canTimeout: g.canTimeout,
       log: g.log,
-      embedTitle: g.embedTitle,
       gameMsg: g.gameMsg,
+      roundNum: forfeitingRoundNum,
+      endType: "forfeit",
     });
   }, TURN_TIMEOUT_MS);
 }
@@ -329,6 +350,7 @@ async function handlePull({ interaction, gameKey, turn }) {
 
   const isBullet = (game.pullCount === game.bulletChamber);
   if (isBullet) {
+    const roundNum = game.turn + 1;
     game.log.push(pickFrom(LOSER_FLAVOR, current.name));
     await finishGame({
       gameKey,
@@ -337,8 +359,9 @@ async function handlePull({ interaction, gameKey, turn }) {
       loser: current,
       canTimeout: game.canTimeout,
       log: game.log,
-      embedTitle: game.embedTitle,
       gameMsg: game.gameMsg,
+      roundNum,
+      endType: "bullet",
     });
     return;
   }
@@ -437,7 +460,7 @@ client.on("interactionCreate", async (interaction) => {
         const botMember = interaction.guild.members.me;
         const canTimeout = botMember?.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ?? false;
 
-        const embedTitle = `🔫 Unfriendly Roulette — ${players.map(p => p.name).join(" vs ")}`;
+        const embedTitle = "🔫 Unfriendly Roulette";
         const gameMsg = await interaction.channel.send({
           embeds: [buildGameEmbed({
             title: embedTitle,
@@ -460,7 +483,7 @@ client.on("interactionCreate", async (interaction) => {
           pullCount: 0,
           currentIdx: 0,
           turn: 0,
-          log: [],
+          log: ["🎰 The cylinder is loaded. One bullet. Six chambers. Good luck."],
           turnTimer: null,
         });
 
