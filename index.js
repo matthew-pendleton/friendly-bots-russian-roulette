@@ -84,7 +84,6 @@ function recordResult(survivorIds, loserId) {
 // ── Flavor text ───────────────────────────────────────────────────────────────
 const CHALLENGE_TAUNTS = [
   (c, players) => `🔫 <@${c}> has loaded the cylinder and is inviting ${players} to play. Nobody has to do this.`,
-  (c, players) => `🫀 <@${c}> spun the cylinder, looked ${players} dead in the eye, and said nothing. Just slid the gun across the table.`,
   (c, players) => `🎰 <@${c}> has proposed an unfriendly game of Russian Roulette to ${players}. The word "unfriendly" is doing a lot of work here.`,
   (c, players) => `🕯️ <@${c}> dimmed the lights, poured something they shouldn't have, and challenged ${players} to a round.`,
   (c, players) => `☠️ <@${c}> has extended an invitation to ${players}. It is not the kind of invitation you frame and put on a wall.`,
@@ -143,11 +142,15 @@ function pickFrom(arr, ...args) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function buildPullRow({ channelId, hostId, turn, enabled = true }) {
+function buildPullRow({ channelId, hostId, turn, enabled = true, requiredPlayerName }) {
+  const label = requiredPlayerName
+    ? `Pull trigger: ${requiredPlayerName}`
+    : "Pull trigger";
+
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`rou_pull:${channelId}:${hostId}:${turn}`)
-      .setLabel("Pull trigger")
+      .setLabel(label)
       .setStyle(ButtonStyle.Primary)
       .setDisabled(!enabled)
   );
@@ -207,12 +210,14 @@ async function registerCommands() {
 // ── Game engine ───────────────────────────────────────────────────────────────
 function buildGameEmbed({ title, log, players, currentPlayerId, color = 0x8b0000 }) {
   const playersInline = players.map(p => `**${p.name}**`).join(" · ");
-  const logText        = log.length ? log.join("\n") : "";
+  const logBlock       = log.length
+    ? log.map(line => `> ${line}`).join("\n")
+    : "> (waiting for first pull)";
   const turnFooter     = currentPlayerId
-    ? `\n\n### <@${currentPlayerId}>'s turn`
+    ? `\n\n## <@${currentPlayerId}>'s turn`
     : "";
 
-  const description = `Players: ${playersInline}\n\n${logText}${turnFooter}`;
+  const description = `### Players: ${playersInline}\n\n${logBlock}${turnFooter}`;
 
   return new EmbedBuilder()
     .setColor(color)
@@ -228,20 +233,22 @@ function cleanupGame(gameKey) {
   activeGames.delete(gameKey);
 }
 
-async function finishGame({ gameKey, channel, players, loser, canTimeout, log, gameMsg, roundNum, endType }) {
+async function finishGame({ gameKey, channel, players, loser, canTimeout, log, gameMsg }) {
   if (!activeGames.has(gameKey)) return;
+  const winners = players.filter(p => p.id !== loser.id);
+  const winnerNames = winners.map(p => p.name);
+  const winnerText = winnerNames.length === 1
+    ? `${winnerNames[0]} Wins`
+    : `Winners: ${winnerNames.join(", ")}`;
 
-  const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
   // Record stats
-  const survivors = players.filter(p => p.id !== loser.id).map(p => p.id);
+  const survivors = winners.map(p => p.id);
   recordResult(survivors, loser.id);
 
   // Disable buttons
   await gameMsg.edit({
     embeds: [buildGameEmbed({
-      title: endType === "bullet"
-        ? `💥 ${roundEmoji} — Bullet found`
-        : `⏳ ${roundEmoji} — Turn forfeited`,
+      title: `Game Over - ${winnerText}`,
       log,
       players,
       color: 0xffd700,
@@ -276,11 +283,11 @@ async function startTurn(gameKey) {
 
   // Add tension flavor occasionally on later pulls
   if (game.pullCount >= 3 && Math.random() < 0.4) {
-    game.log.push(`> ${pickFrom(TENSION_FLAVOR)}`);
+    game.log.push(`${roundEmoji} Commentary: ${pickFrom(TENSION_FLAVOR)}`);
   }
 
   const embeds = [buildGameEmbed({
-    title: `${game.embedTitle} ${roundEmoji}`,
+    title: game.embedTitle,
     log: [...game.log],
     players: game.players,
     currentPlayerId: current.id,
@@ -293,6 +300,7 @@ async function startTurn(gameKey) {
       hostId: game.hostId,
       turn: game.turn,
       enabled: true,
+      requiredPlayerName: current.name,
     })],
   }).catch(() => {});
 
@@ -304,7 +312,8 @@ async function startTurn(gameKey) {
     const g = activeGames.get(gameKey);
     if (!g || g.turn !== forfeitingTurn) return;
     const forfeiter = g.players[forfeitingIdx];
-    g.log.push(pickFrom(FORFEIT_FLAVOR, forfeiter.name));
+    const forfeitEmoji = ROUND_EMOJIS[forfeitingRoundNum - 1] ?? `${forfeitingRoundNum}`;
+    g.log.push(`${forfeitEmoji} ${forfeiter.name} forfeits (no pull in time) — eliminated.`);
     await finishGame({
       gameKey,
       channel: g.channel,
@@ -313,8 +322,6 @@ async function startTurn(gameKey) {
       canTimeout: g.canTimeout,
       log: g.log,
       gameMsg: g.gameMsg,
-      roundNum: forfeitingRoundNum,
-      endType: "forfeit",
     });
   }, TURN_TIMEOUT_MS);
 }
@@ -343,6 +350,7 @@ async function handlePull({ interaction, gameKey, turn }) {
       hostId: game.hostId,
       turn: game.turn,
       enabled: false,
+      requiredPlayerName: current.name,
     })],
   }).catch(() => {});
 
@@ -351,7 +359,8 @@ async function handlePull({ interaction, gameKey, turn }) {
   const isBullet = (game.pullCount === game.bulletChamber);
   if (isBullet) {
     const roundNum = game.turn + 1;
-    game.log.push(pickFrom(LOSER_FLAVOR, current.name));
+    const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
+    game.log.push(`${roundEmoji} Bullet fired — ${current.name} is eliminated.`);
     await finishGame({
       gameKey,
       channel: game.channel,
@@ -360,13 +369,13 @@ async function handlePull({ interaction, gameKey, turn }) {
       canTimeout: game.canTimeout,
       log: game.log,
       gameMsg: game.gameMsg,
-      roundNum,
-      endType: "bullet",
     });
     return;
   }
 
-  game.log.push(pickFrom(SAFE_PULL_FLAVOR, current.name));
+  const safeRoundNum = game.turn + 1;
+  const safeRoundEmoji = ROUND_EMOJIS[safeRoundNum - 1] ?? `${safeRoundNum}`;
+  game.log.push(`${safeRoundEmoji} ${current.name} pulls — safe.`);
   game.pullCount += 1;
   game.currentIdx = (game.currentIdx + 1) % game.players.length;
   game.turn += 1;
@@ -464,7 +473,7 @@ client.on("interactionCreate", async (interaction) => {
         const gameMsg = await interaction.channel.send({
           embeds: [buildGameEmbed({
             title: embedTitle,
-            log: ["🎰 The cylinder is loaded. One bullet. Six chambers. Good luck."],
+            log: [],
             players,
           })],
           components: [buildPullRow({ channelId, hostId: hostIdStr, turn: 0, enabled: true })],
@@ -483,7 +492,7 @@ client.on("interactionCreate", async (interaction) => {
           pullCount: 0,
           currentIdx: 0,
           turn: 0,
-          log: ["🎰 The cylinder is loaded. One bullet. Six chambers. Good luck."],
+          log: [],
           turnTimer: null,
         });
 
