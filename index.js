@@ -310,7 +310,7 @@ async function startTurn(gameKey) {
     if (!g || g.turn !== forfeitingTurn) return;
     const forfeiter = g.players[forfeitingIdx];
     const forfeitEmoji = ROUND_EMOJIS[forfeitingRoundNum - 1] ?? `${forfeitingRoundNum}`;
-    g.log.push(`${forfeitEmoji} ${forfeiter.name} forfeits (no pull in time) — eliminated.`);
+    g.log.push(`${forfeitEmoji} **${forfeiter.name}** forfeits (no pull in time) — eliminated.`);
     await finishGame({
       gameKey,
       channel: g.channel,
@@ -357,7 +357,7 @@ async function handlePull({ interaction, gameKey, turn }) {
   if (isBullet) {
     const roundNum = game.turn + 1;
     const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
-    game.log.push(`${roundEmoji} Bullet fired — ${current.name} is eliminated.`);
+    game.log.push(`${roundEmoji} 💥 BANG! **${current.name}** is eliminated.`);
     await finishGame({
       gameKey,
       channel: game.channel,
@@ -372,7 +372,7 @@ async function handlePull({ interaction, gameKey, turn }) {
 
   const safeRoundNum = game.turn + 1;
   const safeRoundEmoji = ROUND_EMOJIS[safeRoundNum - 1] ?? `${safeRoundNum}`;
-  game.log.push(`${safeRoundEmoji} ${current.name} pulls — safe.`);
+  game.log.push(`${safeRoundEmoji} **${current.name}** pulls — \`safe\`.`);
   game.pullCount += 1;
   game.currentIdx = (game.currentIdx + 1) % game.players.length;
   game.turn += 1;
