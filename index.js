@@ -743,11 +743,18 @@ client.on("interactionCreate", async (interaction) => {
     setTimeout(async () => {
       const g = activeGames.get(gameKey);
       if (!g || g.phase !== "invite") return;
+      const whoDidntRespond = invitedIds.filter(id => !g.accepted.has(id));
       allIds.forEach(id => activePlayers.delete(id));
       activeGames.delete(gameKey);
       try {
+        const challenger = interaction.user.id;
+        const msg = whoDidntRespond.length === 0
+          ? pickFrom(TIMEOUT_LINES, challenger, invitedIds[0])
+          : whoDidntRespond.length === 1
+            ? pickFrom(TIMEOUT_LINES, challenger, whoDidntRespond[0])
+            : `⏱️ ${whoDidntRespond.map(id => `<@${id}>`).join(" and ")} didn't respond to <@${challenger}>'s challenge.`;
         await interaction.editReply({
-          content: pickFrom(TIMEOUT_LINES, interaction.user.id, invitedIds[0]),
+          content: msg,
           components: [],
         });
       } catch { /* expired */ }
