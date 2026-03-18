@@ -398,15 +398,47 @@ async function handlePull({ interaction, gameKey, turn }) {
     const roundNum = game.turn + 1;
     const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
     game.log.push(`${roundEmoji} 💥 BANG! **${current.name}** is eliminated.`);
-    await finishGame({
-      gameKey,
-      channel: game.channel,
-      players: game.players,
-      loser: current,
-      canTimeout: game.canTimeout,
-      log: game.log,
-      gameMsg: game.gameMsg,
-    });
+
+    if (game.players.length === 2) {
+      // 2-player game: one elimination = game over (finishGame does recordResult, timeout, cleanup)
+      await finishGame({
+        gameKey,
+        channel: game.channel,
+        players: game.players,
+        loser: current,
+        canTimeout: game.canTimeout,
+        log: game.log,
+        gameMsg: game.gameMsg,
+      });
+      return;
+    }
+
+    // 3-player game: record elimination, timeout, then continue with 2 players
+    const survivors = game.players.filter(p => p.id !== current.id).map(p => p.id);
+    recordResult(survivors, current.id);
+
+    if (game.canTimeout) {
+      try {
+        await current.member.timeout(TIMEOUT_MINUTES * 60 * 1000, `Lost an Unfriendly Roulette game`);
+        await game.channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
+      } catch {
+        await game.channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
+      }
+    } else {
+      await game.channel.send(`⚠️ I don't have Moderate Members permission, so <@${current.id}> won't be timed out this round.`);
+    }
+
+    activePlayers.delete(current.id);
+
+    game.pullCount += 1; // advance cylinder so next player pulls next chamber
+    game.turn += 1; // new turn for the next player's button
+    const newPlayers = game.players.filter(p => p.id !== current.id);
+    const nextOldIdx = (game.currentIdx + 1) % game.players.length;
+    const newCurrentIdx = nextOldIdx > game.currentIdx ? nextOldIdx - 1 : nextOldIdx;
+
+    game.players = newPlayers;
+    game.currentIdx = newCurrentIdx;
+    await startTurn(gameKey);
     return;
   }
 
