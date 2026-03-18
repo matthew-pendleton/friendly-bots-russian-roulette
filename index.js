@@ -86,10 +86,7 @@ const CHALLENGE_TAUNTS = [
   (c, players) => `🔫 <@${c}> has loaded the cylinder and is inviting ${players} to play. Nobody has to do this.`,
   (c, players) => `🎰 <@${c}> has proposed an unfriendly game of Russian Roulette to ${players}. The word "unfriendly" is doing a lot of work here.`,
   (c, players) => `🕯️ <@${c}> dimmed the lights, poured something they shouldn't have, and challenged ${players} to a round.`,
-  (c, players) => `☠️ <@${c}> has extended an invitation to ${players}. It is not the kind of invitation you frame and put on a wall.`,
   (c, players) => `🩸 <@${c}> has decided that ${players} should play a game. The game involves one bullet and poor decision-making.`,
-  (c, players) => `🎲 <@${c}> looked at ${players} and said "I feel lucky." This is not reassuring for anyone involved.`,
-  (c, players) => `🌑 <@${c}> challenges ${players} to Russian Roulette. At least someone in this server has conviction.`,
 ];
 
 const DECLINE_LINES = [
