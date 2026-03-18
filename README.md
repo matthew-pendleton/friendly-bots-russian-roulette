@@ -2,7 +2,9 @@
 
 Discord bot: Russian Roulette — part of the **Unfriendly** bot suite.
 
-Gather 2–3 players and take turns pulling the trigger. One bullet. Six chambers. The loser gets timed out.
+Gather 2–3 players and take turns pulling the trigger. One bullet. Six chambers.
+Each turn is a button press — if you don’t pull within 30 seconds, you forfeit.
+The loser gets timed out (if the bot has permission).
 
 ## Setup
 

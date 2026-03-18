@@ -46,13 +46,14 @@ const client = new Client({
 });
 
 // ── Active game tracking ──────────────────────────────────────────────────────
-const activeGames   = new Map(); // channelId → game state
+const activeGames   = new Map(); // gameKey (channelId:hostId) → game state
 const activePlayers = new Set(); // userId → in a game
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const TIMEOUT_MINUTES      = 5;
 const INVITE_TIMEOUT_MS    = 60000;
-const PULL_DELAY_MS        = 2500;
+const TURN_TIMEOUT_MS      = 30000;
+const PULL_DELAY_MS        = 1200;
 const CHAMBERS             = 6;
 const STATS_FILE           = path.join(__dirname, "stats.json");
 
@@ -81,7 +82,7 @@ function recordResult(survivorIds, loserId) {
 
 // ── Flavor text ───────────────────────────────────────────────────────────────
 const CHALLENGE_TAUNTS = [
-  (c, players) => `🔫 <@${c}> has loaded the cylinder and is inviting ${players} to play. Nobody has to do this. Somebody will.`,
+  (c, players) => `🔫 <@${c}> has loaded the cylinder and is inviting ${players} to play. Nobody has to do this.`,
   (c, players) => `🫀 <@${c}> spun the cylinder, looked ${players} dead in the eye, and said nothing. Just slid the gun across the table.`,
   (c, players) => `🎰 <@${c}> has proposed an unfriendly game of Russian Roulette to ${players}. The word "unfriendly" is doing a lot of work here.`,
   (c, players) => `🕯️ <@${c}> dimmed the lights, poured something they shouldn't have, and challenged ${players} to a round.`,
@@ -95,19 +96,11 @@ const DECLINE_LINES = [
   (d) => `🐔 <@${d}> looked at the gun, looked at the table, and quietly left the room.`,
   (d) => `📵 <@${d}> declined. Smart, probably. Cowardly, definitely.`,
   (d) => `🧘 <@${d}> said they're in a really good headspace right now and a bullet would disrupt that.`,
-  (d) => `🩹 <@${d}> cited a pre-existing condition. The condition is self-preservation.`,
-  (d) => `🚶 <@${d}> stood up, nodded respectfully, and walked directly out of the server.`,
   (d) => `🍵 <@${d}> said they just made tea and the timing really doesn't work for them right now.`,
-  (d) => `🔕 <@${d}> saw the invite, put their phone face-down, and resumed their day.`,
-  (d) => `💅 <@${d}> said no with the energy of someone who has already moved on.`,
 ];
 
 const TIMEOUT_LINES = [
-  (c, d) => `⏱️ <@${d}> didn't respond to <@${c}>'s challenge. The gun sits on the table, unclaimed.`,
-  (c, d) => `👻 <@${c}> set up the whole thing and <@${d}> just ghosted. The cylinder is still spinning.`,
-  (c, d) => `🌊 <@${d}> left <@${c}> on read. The bullet waits for no one.`,
-  (c, d) => `🦗 <@${c}> challenged <@${d}>. <@${d}> said nothing. Challenge expired.`,
-  (c, d) => `🕰️ A minute passed. <@${d}> let it pass. The game does not wait.`,
+  (c, d) => `⏱️ <@${d}> didn't respond to <@${c}>'s challenge.`,
 ];
 
 const SAFE_PULL_FLAVOR = [
@@ -126,23 +119,15 @@ const SAFE_PULL_FLAVOR = [
 const LOSER_FLAVOR = [
   (player) => `💥 **${player}** pulls the trigger. The chamber wasn't empty. It's over.`,
   (player) => `💥 **${player}** — that was the one. Game over.`,
-  (player) => `💥 Not **${player}**'s round. Not **${player}**'s day.`,
-  (player) => `💥 **${player}** found the bullet. The bullet found **${player}**.`,
-  (player) => `💥 **${player}** pulls. The cylinder had one job. It did its job.`,
-  (player) => `💥 And just like that, **${player}** is done. The game always wins.`,
-  (player) => `💥 **${player}** knew the odds. The odds didn't care.`,
-  (player) => `💥 **${player}** — eliminated. The remaining players will not be making eye contact for a while.`,
+  (player) => `💥 **${player}** is done. The house always wins.`,
+  (player) => `💥 **${player}** knew the odds.`,
 ];
 
 const TENSION_FLAVOR = [
   "🎙️ *The room gets very quiet.*",
-  "🎙️ *Nobody is breathing right now.*",
   "🎙️ *The announcer has gone silent. Even they don't want to watch.*",
   "🎙️ *The odds are getting worse. Everyone knows the odds are getting worse.*",
   "🎙️ *At a certain point, luck stops being a factor.*",
-  "🎙️ *chat: I can't watch*",
-  "🎙️ *chat: bro really doing this*",
-  "🎙️ *chat: the odds are not mathing right now*",
 ];
 
 function pickFrom(arr, ...args) {
@@ -151,6 +136,16 @@ function pickFrom(arr, ...args) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function buildPullRow({ channelId, hostId, turn, enabled = true }) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`rou_pull:${channelId}:${hostId}:${turn}`)
+      .setLabel("Pull trigger")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(!enabled)
+  );
+}
 
 // ── Slash command definitions ─────────────────────────────────────────────────
 const commands = [
@@ -214,102 +209,178 @@ function buildGameEmbed({ title, log, players, round, color = 0x8b0000 }) {
     .setDescription(`${playerList}${logText}`);
 }
 
-async function runGame(channel, players) {
-  // Load the cylinder — one bullet in a random chamber
-  const botMember = channel.guild.members.me;
-  const canTimeout = botMember?.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ?? false;
+function cleanupGame(gameKey) {
+  const game = activeGames.get(gameKey);
+  if (!game) return;
+  if (game.turnTimer) clearTimeout(game.turnTimer);
+  game.players.forEach(p => activePlayers.delete(p.id));
+  activeGames.delete(gameKey);
+}
 
-  const bulletChamber = Math.floor(Math.random() * CHAMBERS); // 0-5
-  let   pullCount     = 0;
-  let   currentIdx    = 0;
-  const log           = [];
+async function finishGame({ gameKey, channel, players, loser, canTimeout, log, embedTitle, gameMsg }) {
+  // Record stats
+  const survivors = players.filter(p => p.id !== loser.id).map(p => p.id);
+  recordResult(survivors, loser.id);
 
-  const embedTitle = `🔫 Unfriendly Roulette — ${players.map(p => p.name).join(" vs ")}`;
-
-  const gameMsg = await channel.send({
+  // Disable buttons
+  await gameMsg.edit({
     embeds: [buildGameEmbed({
-      title: embedTitle,
-      log: ["🎰 The cylinder is loaded. One bullet. Six chambers. Good luck."],
+      title: `💀 Game Over`,
+      log,
       players,
+      color: 0xffd700,
     })],
-  });
+    components: [],
+  }).catch(() => {});
+
+  if (canTimeout) {
+    try {
+      await loser.member.timeout(
+        TIMEOUT_MINUTES * 60 * 1000,
+        `Lost an Unfriendly Roulette game`
+      );
+      await channel.send(`🔇 <@${loser.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
+    } catch {
+      await channel.send(`⚠️ Couldn't time out <@${loser.id}> — they may be a mod or above my role.`);
+    }
+  } else {
+    await channel.send(`⚠️ I don't have Moderate Members permission, so <@${loser.id}> won't be timed out this round.`);
+  }
+
+  cleanupGame(gameKey);
+}
+
+async function startTurn(gameKey) {
+  const game = activeGames.get(gameKey);
+  if (!game) return;
+
+  const current = game.players[game.currentIdx];
+  const turnLine = `👉 It's <@${current.id}>'s turn. Click **Pull trigger** within **${Math.floor(TURN_TIMEOUT_MS / 1000)}s** or forfeit.`;
+
+  // Add tension flavor occasionally on later pulls
+  if (game.pullCount >= 3 && Math.random() < 0.4) {
+    game.log.push(pickFrom(TENSION_FLAVOR));
+  }
+
+  const embeds = [buildGameEmbed({
+    title: game.embedTitle,
+    log: [...game.log, turnLine],
+    players: game.players,
+  })];
+
+  await game.gameMsg.edit({
+    embeds,
+    components: [buildPullRow({
+      channelId: game.channelId,
+      hostId: game.hostId,
+      turn: game.turn,
+      enabled: true,
+    })],
+  }).catch(() => {});
+
+  if (game.turnTimer) clearTimeout(game.turnTimer);
+  game.turnTimer = setTimeout(async () => {
+    const g = activeGames.get(gameKey);
+    if (!g) return;
+    const forfeiter = g.players[g.currentIdx];
+    g.log.push(`🏳️ **${forfeiter.name}** hesitated too long and forfeited.`);
+    g.log.push(pickFrom(LOSER_FLAVOR, forfeiter.name));
+    await finishGame({
+      gameKey,
+      channel: g.channel,
+      players: g.players,
+      loser: forfeiter,
+      canTimeout: g.canTimeout,
+      log: g.log,
+      embedTitle: g.embedTitle,
+      gameMsg: g.gameMsg,
+    });
+  }, TURN_TIMEOUT_MS);
+}
+
+async function handlePull({ interaction, gameKey, turn }) {
+  const game = activeGames.get(gameKey);
+  if (!game) {
+    return interaction.reply({ content: "⚠️ This game no longer exists.", ephemeral: true }).catch(() => {});
+  }
+
+  if (turn !== game.turn) {
+    return interaction.reply({ content: "⚠️ This turn has already moved on.", ephemeral: true }).catch(() => {});
+  }
+
+  const current = game.players[game.currentIdx];
+  if (interaction.user.id !== current.id) {
+    return interaction.reply({ content: `⚠️ It's <@${current.id}>'s turn.`, ephemeral: true }).catch(() => {});
+  }
+
+  if (game.turnTimer) clearTimeout(game.turnTimer);
+
+  // Prevent double clicks while we resolve
+  await interaction.update({
+    components: [buildPullRow({
+      channelId: game.channelId,
+      hostId: game.hostId,
+      turn: game.turn,
+      enabled: false,
+    })],
+  }).catch(() => {});
 
   await sleep(PULL_DELAY_MS);
 
-  while (true) {
-    const current = players[currentIdx];
-    const isBullet = (pullCount === bulletChamber);
-
-    await sleep(PULL_DELAY_MS);
-
-    // Add tension flavor occasionally on later pulls
-    if (pullCount >= 3 && Math.random() < 0.4) {
-      log.push(pickFrom(TENSION_FLAVOR));
-      await gameMsg.edit({
-        embeds: [buildGameEmbed({ title: embedTitle, log, players })],
-      });
-      await sleep(PULL_DELAY_MS);
-    }
-
-    if (isBullet) {
-      // Loser found
-      log.push(pickFrom(LOSER_FLAVOR, current.name));
-      await gameMsg.edit({
-        embeds: [buildGameEmbed({
-          title: `💀 Game Over`,
-          log,
-          players,
-          color: 0xffd700,
-        })],
-      });
-
-      // Record stats
-      const survivors = players.filter(p => p.id !== current.id).map(p => p.id);
-      recordResult(survivors, current.id);
-
-      // Timeout the loser
-      if (canTimeout) {
-        try {
-          await current.member.timeout(
-            TIMEOUT_MINUTES * 60 * 1000,
-            `Lost an Unfriendly Roulette game`
-          );
-          await channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
-        } catch {
-          await channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
-        }
-      } else {
-        await channel.send(`⚠️ I don't have Moderate Members permission, so <@${current.id}> won't be timed out this round.`);
-      }
-
-      break;
-    } else {
-      log.push(pickFrom(SAFE_PULL_FLAVOR, current.name));
-      await gameMsg.edit({
-        embeds: [buildGameEmbed({ title: embedTitle, log, players })],
-      });
-    }
-
-    pullCount++;
-    currentIdx = (currentIdx + 1) % players.length;
+  const isBullet = (game.pullCount === game.bulletChamber);
+  if (isBullet) {
+    game.log.push(pickFrom(LOSER_FLAVOR, current.name));
+    await finishGame({
+      gameKey,
+      channel: game.channel,
+      players: game.players,
+      loser: current,
+      canTimeout: game.canTimeout,
+      log: game.log,
+      embedTitle: game.embedTitle,
+      gameMsg: game.gameMsg,
+    });
+    return;
   }
+
+  game.log.push(pickFrom(SAFE_PULL_FLAVOR, current.name));
+  game.pullCount += 1;
+  game.currentIdx = (game.currentIdx + 1) % game.players.length;
+  game.turn += 1;
+  await startTurn(gameKey);
 }
 
 // ── Interaction handler ───────────────────────────────────────────────────────
 client.on("interactionCreate", async (interaction) => {
   try {
 
-  // ── Button: accept/decline ────────────────────────────────────────────────
+  // ── Button interactions ───────────────────────────────────────────────────
   if (interaction.isButton()) {
     const parts = interaction.customId.split(":");
     if (!parts[0].startsWith("rou_")) return;
 
-    const [action, hostId, ...invitedIds] = parts;
+    const action = parts[0];
+
+    if (action === "rou_pull") {
+      const [, channelId, hostId, turnStr] = parts;
+      const gameKey = `${channelId}:${hostId}`;
+      const turn = Number(turnStr);
+      if (!Number.isFinite(turn)) {
+        return interaction.reply({ content: "⚠️ Invalid action.", ephemeral: true });
+      }
+      return handlePull({ interaction, gameKey, turn });
+    }
+
+    const [, hostId, ...invitedIds] = parts;
     const gameKey = `${interaction.channel.id}:${hostId}`;
     const game    = activeGames.get(gameKey);
 
     if (!game) {
       return interaction.reply({ content: "⚠️ This game no longer exists.", ephemeral: true });
+    }
+
+    if (game.phase && game.phase !== "invite") {
+      return interaction.reply({ content: "⚠️ This invite has already been used.", ephemeral: true });
     }
 
     // Only invited players can respond
@@ -361,13 +432,44 @@ client.on("interactionCreate", async (interaction) => {
       }));
 
       try {
-        await runGame(interaction.channel, players);
+        const channelId = interaction.channel.id;
+        const hostIdStr = String(hostId);
+        const botMember = interaction.guild.members.me;
+        const canTimeout = botMember?.permissions?.has(PermissionsBitField.Flags.ModerateMembers) ?? false;
+
+        const embedTitle = `🔫 Unfriendly Roulette — ${players.map(p => p.name).join(" vs ")}`;
+        const gameMsg = await interaction.channel.send({
+          embeds: [buildGameEmbed({
+            title: embedTitle,
+            log: ["🎰 The cylinder is loaded. One bullet. Six chambers. Good luck."],
+            players,
+          })],
+          components: [buildPullRow({ channelId, hostId: hostIdStr, turn: 0, enabled: true })],
+        });
+
+        activeGames.set(gameKey, {
+          phase: "game",
+          channel: interaction.channel,
+          channelId,
+          hostId: hostIdStr,
+          players,
+          embedTitle,
+          gameMsg,
+          canTimeout,
+          bulletChamber: Math.floor(Math.random() * CHAMBERS),
+          pullCount: 0,
+          currentIdx: 0,
+          turn: 0,
+          log: [],
+          turnTimer: null,
+        });
+
+        await startTurn(gameKey);
       } catch (err) {
         console.error("Game error:", err);
         await interaction.channel.send("💥 Something went wrong mid-game. The cylinder jammed.");
       } finally {
-        game.players.forEach(id => activePlayers.delete(id));
-        activeGames.delete(gameKey);
+        // game cleanup handled by finishGame/cleanupGame
       }
     }
     return;
@@ -383,7 +485,9 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({
       content:
         `## 🔫 Unfriendly Roulette\n` +
-        `2-3 players. One bullet. Six chambers. The loser gets timed out if I have Moderate Members permission.\n\n` +
+        `2-3 players. One bullet. Six chambers.\n` +
+        `Each turn is a button press — if you don't pull within 30 seconds, you forfeit.\n` +
+        `The loser gets timed out if I have Moderate Members permission.\n\n` +
         `**Commands**\n` +
         `\`/unfriendly-roulette play @user1 [@user2]\` — start a game\n` +
         `\`/unfriendly-roulette stats [@user]\` — view stats\n` +
@@ -393,6 +497,7 @@ client.on("interactionCreate", async (interaction) => {
         `> Players take turns pulling the trigger.\n` +
         `> One bullet is loaded into a random chamber out of six.\n` +
         `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes (only if I have Moderate Members).\n` +
+        `> If a player doesn't pull within 30 seconds, they forfeit (treated as the loser).\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
         `*Part of the **Unfriendly** bot suite by Aaykith.*`,
       ephemeral: true,
@@ -542,6 +647,7 @@ client.on("interactionCreate", async (interaction) => {
     const inviteMsg   = pickFrom(CHALLENGE_TAUNTS, interaction.user.id, playerMentions);
 
     activeGames.set(gameKey, {
+      phase:         "invite",
       players:       allIds,
       accepted:      new Set([interaction.user.id]),
       inviteMessage: inviteMsg,
@@ -566,7 +672,8 @@ client.on("interactionCreate", async (interaction) => {
 
     // Auto-expire after 60s
     setTimeout(async () => {
-      if (!activeGames.has(gameKey)) return;
+      const g = activeGames.get(gameKey);
+      if (!g || g.phase !== "invite") return;
       allIds.forEach(id => activePlayers.delete(id));
       activeGames.delete(gameKey);
       try {
