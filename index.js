@@ -58,6 +58,16 @@ const CHAMBERS             = 6;
 const ROUND_EMOJIS        = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"];
 const STATS_FILE           = path.join(__dirname, "stats.json");
 
+/** Pick n distinct chamber indices (0..CHAMBERS-1). */
+function pickRandomChambers(n) {
+  const indices = [...Array(CHAMBERS).keys()];
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (indices.length - i));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return indices.slice(0, n);
+}
+
 // ── Stats persistence ─────────────────────────────────────────────────────────
 function loadStats() {
   try {
@@ -157,7 +167,7 @@ function buildPullRow({ channelId, hostId, turn, enabled = true, requiredPlayerN
 const commands = [
   new SlashCommandBuilder()
     .setName("unfriendly-roulette")
-    .setDescription("Unfriendly Roulette — one bullet, six chambers, real consequences 🔫")
+    .setDescription("Unfriendly Roulette — one or two bullets, six chambers, real consequences 🔫")
     .setDMPermission(false)
     .addSubcommand((sub) =>
       sub
@@ -214,7 +224,7 @@ function buildGameEmbed({ title, log, players, currentPlayerId, color = 0x8b0000
     ? `\n\n## <@${currentPlayerId}>'s turn`
     : "";
 
-  const description = `### Players: ${playersInline}\n\n${logBlock}${turnFooter}`;
+  const description = `### ${playersInline}\n\n${logBlock}${turnFooter}`;
 
   return new EmbedBuilder()
     .setColor(color)
@@ -353,7 +363,7 @@ async function handlePull({ interaction, gameKey, turn }) {
 
   await sleep(PULL_DELAY_MS);
 
-  const isBullet = (game.pullCount === game.bulletChamber);
+  const isBullet = game.bulletChambers.includes(game.pullCount);
   if (isBullet) {
     const roundNum = game.turn + 1;
     const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
@@ -485,7 +495,7 @@ client.on("interactionCreate", async (interaction) => {
           embedTitle,
           gameMsg,
           canTimeout,
-          bulletChamber: Math.floor(Math.random() * CHAMBERS),
+          bulletChambers: pickRandomChambers(players.length === 3 ? 2 : 1),
           pullCount: 0,
           currentIdx: 0,
           turn: 0,
@@ -514,7 +524,7 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({
       content:
         `## 🔫 Unfriendly Roulette\n` +
-        `2-3 players. One bullet. Six chambers.\n` +
+        `2-3 players. One bullet (2 players) or two bullets (3 players). Six chambers.\n` +
         `Each turn is a button press — if you don't pull within 30 seconds, you forfeit.\n` +
         `The loser gets timed out if I have Moderate Members permission.\n\n` +
         `**Commands**\n` +
@@ -524,7 +534,7 @@ client.on("interactionCreate", async (interaction) => {
         `\`/unfriendly-roulette help\` — show this message\n\n` +
         `**How it works**\n` +
         `> Players take turns pulling the trigger.\n` +
-        `> One bullet is loaded into a random chamber out of six.\n` +
+        `> Bullets are loaded into random chambers (1 for 2 players, 2 for 3 players).\n` +
         `> Whoever hits the bullet is timed out for ${TIMEOUT_MINUTES} minutes (only if I have Moderate Members).\n` +
         `> If a player doesn't pull within 30 seconds, they forfeit (treated as the loser).\n` +
         `> Everyone else is recorded as a survivor.\n\n` +
