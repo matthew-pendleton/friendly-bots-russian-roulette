@@ -725,7 +725,6 @@ client.on("interactionCreate", async (interaction) => {
 
     // Validation
     const allUsers   = [interaction.user, p2user, p3user].filter(Boolean);
-    const allMembers = [interaction.member, p2, p3].filter(Boolean);
     const invited    = [p2user, p3user].filter(Boolean);
 
     if (allUsers.some(u => u.bot)) {
@@ -737,11 +736,27 @@ client.on("interactionCreate", async (interaction) => {
     if (allUsers.some(u => u.id === interaction.user.id && u !== interaction.user)) {
       return interaction.editReply({ content: "❌ You can't invite yourself." });
     }
-    if (allMembers.some(m => m.communicationDisabledUntil && m.communicationDisabledUntil > new Date())) {
-      return interaction.editReply({ content: "❌ One of the invited players is currently timed out." });
+    const allIds = allUsers.map(u => u.id);
+
+    // Fetch freshest member state (timeouts especially) to avoid rare stale/partial member objects.
+    const fetchedMembers = await Promise.all(
+      allIds.map((id) => interaction.guild.members.fetch(id).catch(() => null))
+    );
+    const now = Date.now();
+    const timedOutIds = fetchedMembers
+      .filter(Boolean)
+      .filter(m => m.communicationDisabledUntilTimestamp && m.communicationDisabledUntilTimestamp > now)
+      .map(m => m.id);
+
+    if (timedOutIds.length) {
+      const who = timedOutIds.map(id => `<@${id}>`).join(", ");
+      return interaction.editReply({ content: `❌ Can't start: ${who} is currently timed out.` });
     }
-    if (allUsers.some(u => activePlayers.has(u.id))) {
-      return interaction.editReply({ content: "⚠️ One of the players is already in a game." });
+
+    const alreadyInGameIds = allIds.filter((id) => activePlayers.has(id));
+    if (alreadyInGameIds.length) {
+      const who = alreadyInGameIds.map(id => `<@${id}>`).join(", ");
+      return interaction.editReply({ content: `⚠️ Can't start: ${who} is already in a game.` });
     }
 
     const botMember = interaction.guild.members.me;
@@ -755,7 +770,6 @@ client.on("interactionCreate", async (interaction) => {
 
     const gameKey     = `${interaction.channel.id}:${interaction.user.id}`;
     const invitedIds  = invited.map(u => u.id);
-    const allIds      = allUsers.map(u => u.id);
     const playerMentions = invited.map(u => `<@${u.id}>`).join(" and ");
     const inviteMsg   = pickFrom(CHALLENGE_TAUNTS, interaction.user.id, playerMentions);
 
