@@ -364,91 +364,103 @@ async function startTurn(gameKey) {
 }
 
 async function handlePull({ interaction, gameKey, turn }) {
-  const game = activeGames.get(gameKey);
-  if (!game) {
-    return interaction.reply({ content: "⚠️ This game no longer exists.", ephemeral: true }).catch(() => {});
-  }
+  try {
+    const game = activeGames.get(gameKey);
+    if (!game) {
+      return interaction.reply({ content: "⚠️ This game no longer exists.", ephemeral: true }).catch(() => {});
+    }
 
-  if (turn !== game.turn) {
-    return interaction.reply({ content: "⚠️ This turn has already moved on.", ephemeral: true }).catch(() => {});
-  }
+    if (turn !== game.turn) {
+      return interaction.reply({ content: "⚠️ This turn has already moved on.", ephemeral: true }).catch(() => {});
+    }
 
-  const current = game.players[game.currentIdx];
-  if (interaction.user.id !== current.id) {
-    return interaction.reply({ content: `⚠️ It's <@${current.id}>'s turn.`, ephemeral: true }).catch(() => {});
-  }
+    const current = game.players[game.currentIdx];
+    if (interaction.user.id !== current.id) {
+      return interaction.reply({ content: `⚠️ It's <@${current.id}>'s turn.`, ephemeral: true }).catch(() => {});
+    }
 
-  if (game.turnTimer) clearTimeout(game.turnTimer);
+    if (game.turnTimer) clearTimeout(game.turnTimer);
 
-  // Prevent double clicks while we resolve
-  await interaction.update({
-    components: [buildPullRow({
-      channelId: game.channelId,
-      hostId: game.hostId,
-      turn: game.turn,
-      enabled: false,
-      requiredPlayerName: current.name,
-    })],
-  }).catch(() => {});
+    // Prevent double clicks while we resolve
+    await interaction.update({
+      components: [buildPullRow({
+        channelId: game.channelId,
+        hostId: game.hostId,
+        turn: game.turn,
+        enabled: false,
+        requiredPlayerName: current.name,
+      })],
+    }).catch(() => {});
 
-  await sleep(PULL_DELAY_MS);
+    await sleep(PULL_DELAY_MS);
 
-  const isBullet = game.bulletChambers.includes(game.pullCount);
-  if (isBullet) {
-    const roundNum = game.turn + 1;
-    const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
-    game.log.push(`${roundEmoji} 💥 BANG! **${current.name}** is eliminated.`);
+    const isBullet = game.bulletChambers.includes(game.pullCount);
+    if (isBullet) {
+      const roundNum = game.turn + 1;
+      const roundEmoji = ROUND_EMOJIS[roundNum - 1] ?? `${roundNum}`;
+      game.log.push(`${roundEmoji} 💥 BANG! **${current.name}** is eliminated.`);
 
-    if (game.players.length === 2) {
-      // 2-player game: one elimination = game over (finishGame does recordResult, timeout, cleanup)
-      await finishGame({
-        gameKey,
-        channel: game.channel,
-        players: game.players,
-        loser: current,
-        canTimeout: game.canTimeout,
-        log: game.log,
-        gameMsg: game.gameMsg,
-      });
+      if (game.players.length === 2) {
+        // 2-player game: one elimination = game over (finishGame does recordResult, timeout, cleanup)
+        await finishGame({
+          gameKey,
+          channel: game.channel,
+          players: game.players,
+          loser: current,
+          canTimeout: game.canTimeout,
+          log: game.log,
+          gameMsg: game.gameMsg,
+        });
+        return;
+      }
+
+      // 3-player game: record elimination, timeout, then continue with 2 players
+      const survivors = game.players.filter(p => p.id !== current.id).map(p => p.id);
+      recordResult(survivors, current.id);
+
+      if (game.canTimeout) {
+        try {
+          await current.member.timeout(TIMEOUT_MINUTES * 60 * 1000, `Lost an Unfriendly Roulette game`);
+          await game.channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
+        } catch {
+          await game.channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
+        }
+      } else {
+        await game.channel.send(`⚠️ I don't have Moderate Members permission, so <@${current.id}> won't be timed out this round.`);
+      }
+
+      activePlayers.delete(current.id);
+
+      game.pullCount += 1; // advance cylinder so next player pulls next chamber
+      game.turn += 1; // new turn for the next player's button
+      const newPlayers = game.players.filter(p => p.id !== current.id);
+      const nextOldIdx = (game.currentIdx + 1) % game.players.length;
+      const newCurrentIdx = nextOldIdx > game.currentIdx ? nextOldIdx - 1 : nextOldIdx;
+
+      game.players = newPlayers;
+      game.currentIdx = newCurrentIdx;
+      await startTurn(gameKey);
       return;
     }
 
-    // 3-player game: record elimination, timeout, then continue with 2 players
-    const survivors = game.players.filter(p => p.id !== current.id).map(p => p.id);
-    recordResult(survivors, current.id);
-
-    if (game.canTimeout) {
-      try {
-        await current.member.timeout(TIMEOUT_MINUTES * 60 * 1000, `Lost an Unfriendly Roulette game`);
-        await game.channel.send(`🔇 <@${current.id}> has been muted for ${TIMEOUT_MINUTES} minutes. The odds were never in their favor.`);
-      } catch {
-        await game.channel.send(`⚠️ Couldn't time out <@${current.id}> — they may be a mod or above my role.`);
-      }
-    } else {
-      await game.channel.send(`⚠️ I don't have Moderate Members permission, so <@${current.id}> won't be timed out this round.`);
-    }
-
-    activePlayers.delete(current.id);
-
-    game.pullCount += 1; // advance cylinder so next player pulls next chamber
-    game.turn += 1; // new turn for the next player's button
-    const newPlayers = game.players.filter(p => p.id !== current.id);
-    const nextOldIdx = (game.currentIdx + 1) % game.players.length;
-    const newCurrentIdx = nextOldIdx > game.currentIdx ? nextOldIdx - 1 : nextOldIdx;
-
-    game.players = newPlayers;
-    game.currentIdx = newCurrentIdx;
+    const safeRoundNum = game.turn + 1;
+    const safeRoundEmoji = ROUND_EMOJIS[safeRoundNum - 1] ?? `${safeRoundNum}`;
+    game.log.push(`${safeRoundEmoji} **${current.name}** pulls — \`safe\`.`);
+    game.pullCount += 1;
+    game.currentIdx = (game.currentIdx + 1) % game.players.length;
+    game.turn += 1;
     await startTurn(gameKey);
-    return;
+  } catch (err) {
+    console.error("Pull handler error:", err);
+    cleanupGame(gameKey);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: "💥 Something went wrong processing that pull. Game aborted." });
+      } else {
+        await interaction.reply({ content: "💥 Something went wrong processing that pull. Game aborted.", ephemeral: true });
+      }
+    } catch { /* ignore */ }
   }
-
-  const safeRoundNum = game.turn + 1;
-  const safeRoundEmoji = ROUND_EMOJIS[safeRoundNum - 1] ?? `${safeRoundNum}`;
-  game.log.push(`${safeRoundEmoji} **${current.name}** pulls — \`safe\`.`);
-  game.pullCount += 1;
-  game.currentIdx = (game.currentIdx + 1) % game.players.length;
-  game.turn += 1;
-  await startTurn(gameKey);
 }
 
 // ── Interaction handler ───────────────────────────────────────────────────────
@@ -469,7 +481,7 @@ client.on("interactionCreate", async (interaction) => {
       if (!Number.isFinite(turn)) {
         return interaction.reply({ content: "⚠️ Invalid action.", ephemeral: true });
       }
-      return handlePull({ interaction, gameKey, turn });
+      return await handlePull({ interaction, gameKey, turn });
     }
 
     const [, hostId, ...invitedIds] = parts;
